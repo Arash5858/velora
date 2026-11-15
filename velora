@@ -1,0 +1,171 @@
+#!/usr/bin/env python3
+
+import argparse
+import hashlib
+import os
+from pathlib import Path
+
+
+VERSION = "1.0.0"
+
+
+def file_hash(path: Path) -> str:
+    """Return SHA-256 hash of a file."""
+    sha256 = hashlib.sha256()
+
+    with path.open("rb") as file:
+        for chunk in iter(lambda: file.read(1024 * 1024), b""):
+            sha256.update(chunk)
+
+    return sha256.hexdigest()
+
+
+def scan_directory(directory: Path):
+    """Scan a directory and return all files."""
+    if not directory.exists():
+        raise FileNotFoundError(f"Directory not found: {directory}")
+
+    return [path for path in directory.rglob("*") if path.is_file()]
+
+
+def find_files(directory: Path, pattern: str):
+    """Find files matching a pattern."""
+    return [
+        path for path in scan_directory(directory)
+        if path.match(pattern)
+    ]
+
+
+def find_duplicates(directory: Path):
+    """Find duplicate files using SHA-256 hashes."""
+    hashes = {}
+    duplicates = {}
+
+    for path in scan_directory(directory):
+        try:
+            digest = file_hash(path)
+        except PermissionError:
+            continue
+
+        if digest in hashes:
+            duplicates.setdefault(digest, [hashes[digest]]).append(path)
+        else:
+            hashes[digest] = path
+
+    return duplicates
+
+
+def show_stats(directory: Path):
+    """Display basic directory statistics."""
+    files = scan_directory(directory)
+
+    total_size = sum(path.stat().st_size for path in files)
+
+    print(f"Directory : {directory.resolve()}")
+    print(f"Files     : {len(files)}")
+    print(f"Size      : {total_size / 1024 / 1024:.2f} MB")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="velora",
+        description="A minimal file intelligence CLI."
+    )
+
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"Velora {VERSION}"
+    )
+
+    subparsers = parser.add_subparsers(dest="command")
+
+    scan = subparsers.add_parser(
+        "scan",
+        help="Scan a directory"
+    )
+    scan.add_argument(
+        "directory",
+        type=Path
+    )
+
+    search = subparsers.add_parser(
+        "search",
+        help="Search for files"
+    )
+    search.add_argument(
+        "directory",
+        type=Path
+    )
+    search.add_argument(
+        "pattern",
+        help="File pattern, e.g. '*.pdf'"
+    )
+
+    duplicate = subparsers.add_parser(
+        "duplicates",
+        help="Find duplicate files"
+    )
+    duplicate.add_argument(
+        "directory",
+        type=Path
+    )
+
+    stats = subparsers.add_parser(
+        "stats",
+        help="Show directory statistics"
+    )
+    stats.add_argument(
+        "directory",
+        type=Path
+    )
+
+    args = parser.parse_args()
+
+    if not args.command:
+        parser.print_help()
+        return
+
+    try:
+        if args.command == "scan":
+            files = scan_directory(args.directory)
+
+            for file in files:
+                print(file)
+
+            print(f"\n{len(files)} files found.")
+
+        elif args.command == "search":
+            files = find_files(
+                args.directory,
+                args.pattern
+            )
+
+            for file in files:
+                print(file)
+
+            print(f"\n{len(files)} matches found.")
+
+        elif args.command == "duplicates":
+            duplicates = find_duplicates(args.directory)
+
+            if not duplicates:
+                print("No duplicate files found.")
+                return
+
+            for files in duplicates.values():
+                print("\nDuplicate group:")
+                for file in files:
+                    print(f"  {file}")
+
+        elif args.command == "stats":
+            show_stats(args.directory)
+
+    except FileNotFoundError as error:
+        print(f"Error: {error}")
+    except PermissionError:
+        print("Error: permission denied.")
+
+
+if __name__ == "__main__":
+    main()
